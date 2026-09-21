@@ -1,0 +1,210 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #07070b;
+  --color-ink-2: #0b0b11;
+  --color-panel: #101017;
+  --color-panel-2: #15151f;
+  --color-panel-3: #1b1b27;
+  --color-line: rgba(255, 255, 255, 0.08);
+  --color-line-strong: rgba(255, 255, 255, 0.14);
+  --color-text: #f3f3ef;
+  --color-muted: #8d8d9e;
+  --color-faint: #55555f;
+  --color-acid: #cdf04d;
+  --color-acid-deep: #9dc214;
+  --color-violet: #8b7cff;
+  --color-teal: #2df5e2;
+  --color-hot: #fe2c55;
+  --color-amber: #ffb45a;
+  --color-mint: #38e08c;
+  --font-display: var(--font-space), "Space Grotesk", ui-sans-serif, sans-serif;
+  --font-sans: var(--font-inter), "Inter", ui-sans-serif, sans-serif;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #26263a transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #26263a;
+  border-radius: 99px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background:
+    radial-gradient(1200px 800px at 85% -10%, rgba(139, 124, 255, 0.08), transparent 60%),
+    radial-gradient(1000px 700px at -10% 110%, rgba(205, 240, 77, 0.05), transparent 55%),
+    var(--color-ink);
+  background-attachment: fixed;
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+
+::selection {
+  background: var(--color-acid);
+  color: #0b0b11;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="time"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.7);
+  cursor: pointer;
+}
+
+/* ---------- composites ---------- */
+
+.panel {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0));
+  background-color: var(--color-panel);
+  border: 1px solid var(--color-line);
+  border-radius: 18px;
+}
+
+.panel-hover {
+  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.35s ease, box-shadow 0.35s ease;
+}
+.panel-hover:hover {
+  transform: translateY(-2px);
+  border-color: var(--color-line-strong);
+  box-shadow: 0 18px 50px -20px rgba(0, 0, 0, 0.8);
+}
+
+.text-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.03em;
+}
+
+.muted {
+  color: var(--color-muted);
+}
+
+/* halo behind key numbers */
+.halo {
+  position: relative;
+}
+.halo::after {
+  content: "";
+  position: absolute;
+  inset: -30% -20%;
+  background: radial-gradient(closest-side, rgba(205, 240, 77, 0.12), transparent);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+.group:hover .halo::after {
+  opacity: 1;
+}
+
+/* equalizer bars */
+@keyframes eq-a {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+@keyframes eq-b {
+  0%, 100% { transform: scaleY(0.9); }
+  40% { transform: scaleY(0.25); }
+  75% { transform: scaleY(0.65); }
+}
+@keyframes eq-c {
+  0%, 100% { transform: scaleY(0.55); }
+  30% { transform: scaleY(1); }
+  70% { transform: scaleY(0.3); }
+}
+.eq-bar {
+  transform-origin: bottom;
+  animation: eq-a 1.15s ease-in-out infinite;
+}
+.eq-bar:nth-child(2) { animation: eq-b 1.05s ease-in-out infinite; }
+.eq-bar:nth-child(3) { animation: eq-c 0.95s ease-in-out infinite; }
+
+/* shimmer sweep on thumbnails */
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.shimmer::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 40%, rgba(255, 255, 255, 0.12) 50%, transparent 60%);
+  transform: translateX(-120%);
+  animation: shimmer 1.6s ease infinite;
+}
+@keyframes shimmer {
+  to { transform: translateX(120%); }
+}
+
+/* pulsing connected dot */
+@keyframes ping-soft {
+  0% { box-shadow: 0 0 0 0 rgba(56, 224, 140, 0.5); }
+  70% { box-shadow: 0 0 0 7px rgba(56, 224, 140, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(56, 224, 140, 0); }
+}
+.pulse-mint {
+  animation: ping-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* film-grain noise overlay */
+.noise::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0.028;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='101%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* dashed progress track animation */
+@keyframes track {
+  to { stroke-dashoffset: -28; }
+}
+
+/* waveform bars in uploader */
+@keyframes wavey {
+  0%, 100% { transform: scaleY(0.3); }
+  50% { transform: scaleY(1); }
+}
+.wavey {
+  transform-origin: center;
+  animation: wavey 0.9s ease-in-out infinite;
+}
+
+/* marquee-less ticker */
+@keyframes tick-slide {
+  0% { opacity: 0; transform: translateY(6px); }
+  12%, 88% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-6px); }
+}
+
+@keyframes float-slow {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.float-slow { animation: float-slow 7s ease-in-out infinite; }
+
+@keyframes spin-slow {
+  to { transform: rotate(360deg); }
+}
+.spin-slow { animation: spin-slow 9s linear infinite; }
+
+/* gradient hairline */
+.hairline {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--color-line-strong), transparent);
+}
