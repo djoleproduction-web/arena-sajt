@@ -130,14 +130,14 @@ const providers: Record<Platform, Provider> = {
     clientId: process.env.INSTAGRAM_CLIENT_ID,
     clientSecret: process.env.INSTAGRAM_CLIENT_SECRET,
     authorizeUrl: ({ redirectUri, state }) =>
-      `https://api.instagram.com/oauth/authorize?` +
-      new URLSearchParams({
-        client_id: process.env.INSTAGRAM_CLIENT_ID!,
-        redirect_uri: redirectUri,
-        scope: "user_profile,user_media",
-        response_type: "code",
-        state,
-      }),
+  `https://www.instagram.com/oauth/authorize?` +
+  new URLSearchParams({
+    client_id: process.env.INSTAGRAM_CLIENT_ID!,
+    redirect_uri: redirectUri,
+    scope: "instagram_business_basic,instagram_business_content_publish",
+    response_type: "code",
+    state,
+  }),
     exchangeCode: async (code, redirectUri) => {
       const data = await postForm("https://api.instagram.com/oauth/access_token", {
         client_id: process.env.INSTAGRAM_CLIENT_ID!,
