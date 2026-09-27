@@ -2,6 +2,7 @@ import { db } from "@/db";
 import { scheduledPosts } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { PLATFORMS } from "@/lib/utils";
+import { publishPost } from "@/lib/publish";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +64,17 @@ export async function PATCH(req: Request, ctx: Ctx) {
       .where(eq(scheduledPosts.id, postId))
       .returning();
     if (!row) return Response.json({ error: "Not found" }, { status: 404 });
+
+    if (
+      row.status === "scheduled" &&
+      row.executionType === "direct_publish" &&
+      row.videoUrl &&
+      row.scheduledTime &&
+      new Date(row.scheduledTime).getTime() <= Date.now() + 60_000
+    ) {
+      publishPost(postId).catch((e) => console.error("Immediate publish failed", e));
+    }
+
     return Response.json({ post: row });
   } catch (e) {
     console.error(e);
