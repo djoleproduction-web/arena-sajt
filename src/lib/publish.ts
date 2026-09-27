@@ -143,23 +143,49 @@ async function publishInstagram(
 async function publishTikTok(
   accessToken: string,
   videoUrl: string,
-  title: string,
-  caption: string
+  _title: string,
+  _caption: string
 ): Promise<PublishResult> {
   try {
-    const res = await fetch("https://open.tiktokapis.com/v2/post/publish/inbox/video/init/", {
+    const videoRes = await fetch(videoUrl);
+    if (!videoRes.ok) throw new Error("Could not fetch video from storage");
+    const videoBuffer = await videoRes.arrayBuffer();
+    const videoSize = videoBuffer.byteLength;
+
+    const initRes = await fetch("https://open.tiktokapis.com/v2/post/publish/inbox/video/init/", {
       method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json; charset=UTF-8" },
       body: JSON.stringify({
-        source_info: { source: "PULL_FROM_URL", video_url: videoUrl },
-        post_info: { title: `${title} ${caption}`.trim().slice(0, 150) },
+        source_info: {
+          source: "FILE_UPLOAD",
+          video_size: videoSize,
+          chunk_size: videoSize,
+          total_chunk_count: 1,
+        },
       }),
     });
-    const data = await res.json();
-    if (!res.ok || data.error?.code !== "ok") {
-      throw new Error(JSON.stringify(data).slice(0, 300));
+    const initData = await initRes.json();
+    if (!initRes.ok || initData.error?.code !== "ok") {
+      throw new Error(`TikTok init failed: ${JSON.stringify(initData).slice(0, 300)}`);
     }
-    return { success: true, externalId: data.data?.publish_id };
+
+    const uploadUrl = initData.data?.upload_url;
+    if (!uploadUrl) throw new Error("No upload URL returned by TikTok");
+
+    const uploadRes = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "video/mp4",
+        "Content-Range": `bytes 0-${videoSize - 1}/${videoSize}`,
+      },
+      body: videoBuffer,
+    });
+    if (!uploadRes.ok) {
+      const errText = await uploadRes.text();
+      throw new Error(`TikTok upload failed: ${errText.slice(0, 300)}`);
+    }
+
+    return { success: true, externalId: initData.data?.publish_id };
   } catch (e) {
     return { success: false, error: e instanceof Error ? e.message : "Unknown TikTok error" };
   }
