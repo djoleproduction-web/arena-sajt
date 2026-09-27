@@ -1,21 +1,7 @@
 import { handleFor, PLATFORMS, type Platform } from "@/lib/utils";
 
-/**
- * Real OAuth plumbing for TikTok / Instagram / YouTube.
- *
- * Credentials come from environment variables:
- *   TIKTOK_CLIENT_KEY / TIKTOK_CLIENT_SECRET
- *   INSTAGRAM_CLIENT_ID / INSTAGRAM_CLIENT_SECRET
- *   YOUTUBE_CLIENT_ID / YOUTUBE_CLIENT_SECRET
- *
- * Redirect URIs are derived from NEXT_PUBLIC_APP_URL, falling back to the
- * incoming request origin. Register e.g.:
- *   <NEXT_PUBLIC_APP_URL>/api/platforms/tiktok/callback
- * in each developer console.
- */
-
 export const OAUTH_COOKIE = "setlist_oauth";
-export const OAUTH_COOKIE_TTL = 60 * 10; // 10 minutes
+export const OAUTH_COOKIE_TTL = 60 * 10;
 
 export interface OAuthIntent {
   platform: Platform;
@@ -38,8 +24,6 @@ export function callbackUri(req: Request, platform: Platform): string {
   return `${appBase(req)}/api/platforms/${platform}/callback`;
 }
 
-/* ---------------- state cookie encoding ---------------- */
-
 export function encodeIntent(intent: OAuthIntent): string {
   return Buffer.from(JSON.stringify(intent)).toString("base64url");
 }
@@ -57,20 +41,24 @@ export function decodeIntent(raw: string | undefined | null): OAuthIntent | null
     ) {
       return null;
     }
-    if (Date.now() - parsed.iat > OAUTH_COOKIE_TTL * 1000) return null; // stale
+    if (Date.now() - parsed.iat > OAUTH_COOKIE_TTL * 1000) return null;
     return parsed as OAuthIntent;
   } catch {
     return null;
   }
 }
 
-/* ---------------- provider clients ---------------- */
+interface TokenResult {
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt?: Date;
+}
 
 interface Provider {
   clientId?: string;
   clientSecret?: string;
   authorizeUrl: (args: { redirectUri: string; state: string }) => string;
-  exchangeCode: (code: string, redirectUri: string) => Promise<{ accessToken: string }>;
+  exchangeCode: (code: string, redirectUri: string) => Promise<TokenResult>;
   fetchHandle: (accessToken: string) => Promise<string | null>;
 }
 
@@ -82,15 +70,12 @@ async function postForm(url: string, fields: Record<string, string>): Promise<Re
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(
-      `Token exchange failed (${res.status}): ${JSON.stringify(data).slice(0, 300)}`
-    );
+    throw new Error(`Token exchange failed (${res.status}): ${JSON.stringify(data).slice(0, 300)}`);
   }
   return data as Record<string, unknown>;
 }
 
 const providers: Record<Platform, Provider> = {
-  /* ---------------- TikTok ---------------- */
   tiktok: {
     clientId: process.env.TIKTOK_CLIENT_KEY,
     clientSecret: process.env.TIKTOK_CLIENT_SECRET,
@@ -112,7 +97,12 @@ const providers: Record<Platform, Provider> = {
         redirect_uri: redirectUri,
       });
       if (typeof data.access_token !== "string") throw new Error("No access_token in TikTok response");
-      return { accessToken: data.access_token };
+      const expiresIn = typeof data.expires_in === "number" ? data.expires_in : undefined;
+      return {
+        accessToken: data.access_token,
+        refreshToken: typeof data.refresh_token === "string" ? data.refresh_token : undefined,
+        expiresAt: expiresIn ? new Date(Date.now() + expiresIn * 1000) : undefined,
+      };
     },
     fetchHandle: async (accessToken) => {
       const res = await fetch(
@@ -125,29 +115,48 @@ const providers: Record<Platform, Provider> = {
     },
   },
 
-  /* ---------------- Instagram ---------------- */
   instagram: {
     clientId: process.env.INSTAGRAM_CLIENT_ID,
     clientSecret: process.env.INSTAGRAM_CLIENT_SECRET,
     authorizeUrl: ({ redirectUri, state }) =>
-  `https://www.instagram.com/oauth/authorize?` +
-  new URLSearchParams({
-    client_id: process.env.INSTAGRAM_CLIENT_ID!,
-    redirect_uri: redirectUri,
-    scope: "instagram_business_basic,instagram_business_content_publish",
-    response_type: "code",
-    state,
-  }),
+      `https://www.instagram.com/oauth/authorize?` +
+      new URLSearchParams({
+        client_id: process.env.INSTAGRAM_CLIENT_ID!,
+        redirect_uri: redirectUri,
+        scope: "instagram_business_basic,instagram_business_content_publish",
+        response_type: "code",
+        state,
+      }),
     exchangeCode: async (code, redirectUri) => {
-      const data = await postForm("https://api.instagram.com/oauth/access_token", {
+      // Step 1: short-lived token
+      const shortLived = await postForm("https://api.instagram.com/oauth/access_token", {
         client_id: process.env.INSTAGRAM_CLIENT_ID!,
         client_secret: process.env.INSTAGRAM_CLIENT_SECRET!,
         grant_type: "authorization_code",
         redirect_uri: redirectUri,
         code,
       });
-      if (typeof data.access_token !== "string") throw new Error("No access_token in Instagram response");
-      return { accessToken: data.access_token };
+      if (typeof shortLived.access_token !== "string") {
+        throw new Error("No access_token in Instagram response");
+      }
+
+      // Step 2: exchange for a long-lived token (valid 60 days)
+      const longLivedUrl =
+        `https://graph.instagram.com/access_token?` +
+        new URLSearchParams({
+          grant_type: "ig_exchange_token",
+          client_secret: process.env.INSTAGRAM_CLIENT_SECRET!,
+          access_token: shortLived.access_token,
+        });
+      const longLivedRes = await fetch(longLivedUrl);
+      const longLived = await longLivedRes.json().catch(() => ({}));
+
+      if (typeof longLived.access_token === "string") {
+        const expiresIn = typeof longLived.expires_in === "number" ? longLived.expires_in : 60 * 24 * 3600;
+        return { accessToken: longLived.access_token, expiresAt: new Date(Date.now() + expiresIn * 1000) };
+      }
+      // Fallback: short-lived only (still works, just expires sooner)
+      return { accessToken: shortLived.access_token };
     },
     fetchHandle: async (accessToken) => {
       const res = await fetch(
@@ -159,7 +168,6 @@ const providers: Record<Platform, Provider> = {
     },
   },
 
-  /* ---------------- YouTube ---------------- */
   youtube: {
     clientId: process.env.YOUTUBE_CLIENT_ID,
     clientSecret: process.env.YOUTUBE_CLIENT_SECRET,
@@ -172,6 +180,7 @@ const providers: Record<Platform, Provider> = {
         scope:
           "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly",
         access_type: "offline",
+        prompt: "consent",
         include_granted_scopes: "true",
         state,
       }),
@@ -184,7 +193,12 @@ const providers: Record<Platform, Provider> = {
         redirect_uri: redirectUri,
       });
       if (typeof data.access_token !== "string") throw new Error("No access_token in Google response");
-      return { accessToken: data.access_token };
+      const expiresIn = typeof data.expires_in === "number" ? data.expires_in : undefined;
+      return {
+        accessToken: data.access_token,
+        refreshToken: typeof data.refresh_token === "string" ? data.refresh_token : undefined,
+        expiresAt: expiresIn ? new Date(Date.now() + expiresIn * 1000) : undefined,
+      };
     },
     fetchHandle: async (accessToken) => {
       const res = await fetch(
@@ -205,7 +219,6 @@ export function getProvider(platform: Platform): Provider {
   return providers[platform];
 }
 
-/** Fallback handle when a provider doesn't expose one for the account. */
 export function fallbackHandle(artistName: string, platform: Platform): string {
   return handleFor(artistName, platform);
 }
