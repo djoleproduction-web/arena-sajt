@@ -83,7 +83,7 @@ const providers: Record<Platform, Provider> = {
       `https://www.tiktok.com/v2/auth/authorize/?` +
       new URLSearchParams({
         client_key: process.env.TIKTOK_CLIENT_KEY!,
-        scope: "user.info.basic,video.upload,video.publish",
+        scope: "user.info.basic,video.upload",
         response_type: "code",
         redirect_uri: redirectUri,
         state,
