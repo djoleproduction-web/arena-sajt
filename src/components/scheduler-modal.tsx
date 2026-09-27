@@ -185,7 +185,7 @@ export function SchedulerModal() {
   }, [discardPendingBlob, closeScheduler]);
 
   /* ------------ real upload handler ------------ */
-  const handleFile = useCallback(
+    const handleFile = useCallback(
     async (file: File | null | undefined) => {
       if (!file || uploading) return;
       setUploadError(null);
@@ -207,27 +207,37 @@ export function SchedulerModal() {
       setProgress(0);
       setUploadStep(0);
 
-      // real object URL wrapping the user's local file
-      const blobUrl = URL.createObjectURL(file);
+      // local preview only — never sent anywhere
+      const previewUrl = URL.createObjectURL(file);
 
-      // animate progress while metadata is probed (real work happens in parallel)
       const iv = setInterval(() => {
-        setProgress((p) => Math.min(92, p + Math.max(1, Math.round((92 - p) / 8))));
+        setProgress((p) => Math.min(85, p + Math.max(1, Math.round((85 - p) / 8))));
         setUploadStep((s) => Math.min(PROCESS_STEPS.length - 2, s + (Math.random() > 0.75 ? 1 : 0)));
       }, 110);
       intervals.current.push(iv);
 
       try {
-        const meta = await probeVideo(blobUrl);
+        const meta = await probeVideo(previewUrl);
+
+        // real upload to Vercel Blob
+        const form = new FormData();
+        form.append("file", file);
+        const res = await fetch("/api/upload", { method: "POST", body: form });
+        const data = await res.json().catch(() => ({}));
+
         clearInterval(iv);
+
+        if (!res.ok || typeof data.url !== "string") {
+          throw new Error(data.error || "Upload failed");
+        }
+
         setProgress(100);
         setUploadStep(PROCESS_STEPS.length - 1);
         await new Promise((r) => timers.current.push(setTimeout(r, 350)));
 
-        // hand off: revoke previous unsaved blob, keep this one
         discardPendingBlob();
-        pendingBlobRef.current = blobUrl;
-        setVideoUrl(blobUrl);
+        pendingBlobRef.current = previewUrl; // kept only for local preview rendering
+        setVideoUrl(data.url); // REAL public URL — this is what gets saved
         setVideoMeta({
           name: file.name,
           size: file.size,
@@ -235,10 +245,12 @@ export function SchedulerModal() {
           width: meta.width,
           height: meta.height,
         });
-      } catch {
+      } catch (err) {
         clearInterval(iv);
-        URL.revokeObjectURL(blobUrl);
-        setUploadError("Couldn't decode that file — try a different export (H.264 MP4 works best).");
+        URL.revokeObjectURL(previewUrl);
+        setUploadError(
+          err instanceof Error ? err.message : "Couldn't upload that file — try again."
+        );
       } finally {
         setUploading(false);
       }
