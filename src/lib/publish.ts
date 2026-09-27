@@ -9,6 +9,38 @@ interface PublishResult {
   error?: string;
 }
 
+/** Refreshes a Google access token if it's expired (or about to expire). */
+async function getFreshGoogleToken(conn: typeof platformConnections.$inferSelect): Promise<string> {
+  const expiresAt = conn.tokenExpiresAt ? new Date(conn.tokenExpiresAt).getTime() : 0;
+  const isExpiring = !expiresAt || expiresAt < Date.now() + 60_000;
+
+  if (!isExpiring) return conn.accessToken!;
+  if (!conn.refreshToken) return conn.accessToken!;
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: process.env.YOUTUBE_CLIENT_ID!,
+      client_secret: process.env.YOUTUBE_CLIENT_SECRET!,
+      refresh_token: conn.refreshToken,
+      grant_type: "refresh_token",
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok || typeof data.access_token !== "string") {
+    throw new Error(`Failed to refresh Google token: ${JSON.stringify(data).slice(0, 200)}`);
+  }
+
+  const newExpiresAt = new Date(Date.now() + (data.expires_in ?? 3600) * 1000);
+  await db
+    .update(platformConnections)
+    .set({ accessToken: data.access_token, tokenExpiresAt: newExpiresAt })
+    .where(eq(platformConnections.id, conn.id));
+
+  return data.access_token;
+}
+
 async function publishYouTube(
   accessToken: string,
   videoUrl: string,
@@ -82,7 +114,12 @@ export async function publishPost(postId: number): Promise<{ results: Record<str
     }
 
     if (platform === "youtube") {
-      results[platform] = await publishYouTube(conn.accessToken, post.videoUrl, post.title, post.caption);
+      try {
+        const freshToken = await getFreshGoogleToken(conn);
+        results[platform] = await publishYouTube(freshToken, post.videoUrl, post.title, post.caption);
+      } catch (e) {
+        results[platform] = { success: false, error: e instanceof Error ? e.message : "Token refresh failed" };
+      }
     } else {
       results[platform] = { success: false, error: `${platform} publishing not implemented yet` };
     }
