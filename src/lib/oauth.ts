@@ -54,12 +54,17 @@ interface TokenResult {
   expiresAt?: Date;
 }
 
+interface AccountInfo {
+  handle: string | null;
+  accountId?: string;
+}
+
 interface Provider {
   clientId?: string;
   clientSecret?: string;
   authorizeUrl: (args: { redirectUri: string; state: string }) => string;
   exchangeCode: (code: string, redirectUri: string) => Promise<TokenResult>;
-  fetchHandle: (accessToken: string) => Promise<string | null>;
+  fetchAccountInfo: (accessToken: string) => Promise<AccountInfo>;
 }
 
 async function postForm(url: string, fields: Record<string, string>): Promise<Record<string, unknown>> {
@@ -104,14 +109,18 @@ const providers: Record<Platform, Provider> = {
         expiresAt: expiresIn ? new Date(Date.now() + expiresIn * 1000) : undefined,
       };
     },
-    fetchHandle: async (accessToken) => {
+    fetchAccountInfo: async (accessToken) => {
       const res = await fetch(
-        "https://open.tiktokapis.com/v2/user/info/?fields=username,display_name",
+        "https://open.tiktokapis.com/v2/user/info/?fields=open_id,username,display_name",
         { headers: { Authorization: `Bearer ${accessToken}` } }
       );
       const data = await res.json().catch(() => ({}));
       const username = data?.data?.user?.username;
-      return typeof username === "string" && username ? `@${username}` : null;
+      const openId = data?.data?.user?.open_id;
+      return {
+        handle: typeof username === "string" && username ? `@${username}` : null,
+        accountId: typeof openId === "string" ? openId : undefined,
+      };
     },
   },
 
@@ -128,7 +137,6 @@ const providers: Record<Platform, Provider> = {
         state,
       }),
     exchangeCode: async (code, redirectUri) => {
-      // Step 1: short-lived token
       const shortLived = await postForm("https://api.instagram.com/oauth/access_token", {
         client_id: process.env.INSTAGRAM_CLIENT_ID!,
         client_secret: process.env.INSTAGRAM_CLIENT_SECRET!,
@@ -140,7 +148,6 @@ const providers: Record<Platform, Provider> = {
         throw new Error("No access_token in Instagram response");
       }
 
-      // Step 2: exchange for a long-lived token (valid 60 days)
       const longLivedUrl =
         `https://graph.instagram.com/access_token?` +
         new URLSearchParams({
@@ -155,16 +162,19 @@ const providers: Record<Platform, Provider> = {
         const expiresIn = typeof longLived.expires_in === "number" ? longLived.expires_in : 60 * 24 * 3600;
         return { accessToken: longLived.access_token, expiresAt: new Date(Date.now() + expiresIn * 1000) };
       }
-      // Fallback: short-lived only (still works, just expires sooner)
       return { accessToken: shortLived.access_token };
     },
-    fetchHandle: async (accessToken) => {
+    fetchAccountInfo: async (accessToken) => {
       const res = await fetch(
         `https://graph.instagram.com/me?fields=id,username&access_token=${encodeURIComponent(accessToken)}`
       );
       const data = await res.json().catch(() => ({}));
       const username = data?.username;
-      return typeof username === "string" && username ? `@${username}` : null;
+      const id = data?.id;
+      return {
+        handle: typeof username === "string" && username ? `@${username}` : null,
+        accountId: typeof id === "string" ? id : undefined,
+      };
     },
   },
 
@@ -200,17 +210,23 @@ const providers: Record<Platform, Provider> = {
         expiresAt: expiresIn ? new Date(Date.now() + expiresIn * 1000) : undefined,
       };
     },
-    fetchHandle: async (accessToken) => {
+    fetchAccountInfo: async (accessToken) => {
       const res = await fetch(
         "https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true",
         { headers: { Authorization: `Bearer ${accessToken}` } }
       );
       const data = await res.json().catch(() => ({}));
-      const snippet = data?.items?.[0]?.snippet;
+      const item = data?.items?.[0];
+      const snippet = item?.snippet;
+      const channelId = item?.id;
       const customUrl: string | undefined = snippet?.customUrl;
-      if (customUrl) return customUrl.startsWith("@") ? customUrl : `@${customUrl}`;
       const title: string | undefined = snippet?.title;
-      return typeof title === "string" && title ? `@${title.replace(/\s+/g, "")}` : null;
+      const handle = customUrl
+        ? customUrl.startsWith("@") ? customUrl : `@${customUrl}`
+        : typeof title === "string" && title
+        ? `@${title.replace(/\s+/g, "")}`
+        : null;
+      return { handle, accountId: typeof channelId === "string" ? channelId : undefined };
     },
   },
 };
