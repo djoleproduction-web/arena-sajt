@@ -55,7 +55,7 @@ export async function GET(req: Request, ctx: Ctx) {
   try {
     // 1. exchange the authorization code for an access token
     const redirectUri = callbackUri(req, platform);
-    const { accessToken } = await provider.exchangeCode(code, redirectUri);
+    const { accessToken, refreshToken, expiresAt } = await provider.exchangeCode(code, redirectUri);
 
     // 2. read the account handle from the platform profile API
     const liveHandle = await provider.fetchHandle(accessToken).catch(() => null);
@@ -77,10 +77,13 @@ export async function GET(req: Request, ctx: Ctx) {
         platform,
         accountHandle,
         status: "connected",
+        accessToken,
+        refreshToken: refreshToken ?? null,
+        tokenExpiresAt: expiresAt ?? null,
       })
       .onConflictDoUpdate({
         target: [platformConnections.artistId, platformConnections.platform],
-        set: { accountHandle, status: "connected" },
+        set: { accountHandle, status: "connected", accessToken, refreshToken: refreshToken ?? null, tokenExpiresAt: expiresAt ?? null },
       });
 
     return Response.redirect(
