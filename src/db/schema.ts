@@ -27,6 +27,7 @@ export const platformConnections = pgTable(
     accessToken: text("access_token"),
     refreshToken: text("refresh_token"),
     tokenExpiresAt: timestamp("token_expires_at", { mode: "date" }),
+    platformAccountId: text("platform_account_id"),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   },
   (t) => [
