@@ -140,6 +140,31 @@ async function publishInstagram(
   }
 }
 
+async function publishTikTok(
+  accessToken: string,
+  videoUrl: string,
+  title: string,
+  caption: string
+): Promise<PublishResult> {
+  try {
+    const res = await fetch("https://open.tiktokapis.com/v2/post/publish/inbox/video/init/", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source_info: { source: "PULL_FROM_URL", video_url: videoUrl },
+        post_info: { title: `${title} ${caption}`.trim().slice(0, 150) },
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.error?.code !== "ok") {
+      throw new Error(JSON.stringify(data).slice(0, 300));
+    }
+    return { success: true, externalId: data.data?.publish_id };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : "Unknown TikTok error" };
+  }
+}
+
 export async function publishPost(postId: number): Promise<{ results: Record<string, PublishResult> }> {
   const [post] = await db.select().from(scheduledPosts).where(eq(scheduledPosts.id, postId));
   if (!post || !post.videoUrl) {
@@ -174,6 +199,8 @@ export async function publishPost(postId: number): Promise<{ results: Record<str
       } else {
         results[platform] = await publishInstagram(conn.accessToken, conn.platformAccountId, post.videoUrl, post.caption);
       }
+    } else if (platform === "tiktok") {
+      results[platform] = await publishTikTok(conn.accessToken, post.videoUrl, post.title, post.caption);
     } else {
       results[platform] = { success: false, error: `${platform} publishing not implemented yet` };
     }
