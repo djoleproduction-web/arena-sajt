@@ -15,14 +15,6 @@ export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ platform: string }> };
 
-/**
- * GET /api/platforms/{platform}/callback?code=...&state=...
- *
- * Real OAuth completion: verifies the state cookie, exchanges the code for an
- * access token (server-side, secrets never leave the server), fetches the
- * account handle, and upserts the row into `platform_connections` scoped to
- * the artist that started the flow.
- */
 export async function GET(req: Request, ctx: Ctx) {
   const { platform: raw } = await ctx.params;
   const url = new URL(req.url);
@@ -32,11 +24,9 @@ export async function GET(req: Request, ctx: Ctx) {
   if (!isPlatform(raw)) return fail("bad_platform");
   const platform = raw;
 
-  // provider-side denial / error
   const providerError = url.searchParams.get("error") ?? url.searchParams.get("error_type");
   if (providerError) return fail("denied");
 
-  // verify state against the cookie set during authorize
   const jar = await cookies();
   const intent = decodeIntent(jar.get(OAUTH_COOKIE)?.value);
   jar.delete(OAUTH_COOKIE);
@@ -46,30 +36,26 @@ export async function GET(req: Request, ctx: Ctx) {
     return fail("state_mismatch");
   }
 
-  const code = url.searchParams.get("code") ?? url.searchParams.get("code#_"); // IG appends #_ on some clients
+  const code = url.searchParams.get("code") ?? url.searchParams.get("code#_");
   if (!code) return fail("no_code");
 
   const provider = getProvider(platform);
   if (!provider.clientId || !provider.clientSecret) return fail("missing_env");
 
   try {
-    // 1. exchange the authorization code for an access token
     const redirectUri = callbackUri(req, platform);
     const { accessToken, refreshToken, expiresAt } = await provider.exchangeCode(code, redirectUri);
 
-    // 2. read the account handle from the platform profile API
-    const liveHandle = await provider.fetchHandle(accessToken).catch(() => null);
+    const info = await provider.fetchAccountInfo(accessToken).catch(() => ({ handle: null, accountId: undefined }));
 
-    // 3. FK safety: the artist must still exist before we link anything
     const [artist] = await db
       .select()
       .from(artists)
       .where(eq(artists.id, intent.artistId));
     if (!artist) return fail("invalid_artist");
 
-    const accountHandle = liveHandle ?? fallbackHandle(artist.name, platform);
+    const accountHandle = info.handle ?? fallbackHandle(artist.name, platform);
 
-    // 4. upsert scoped to (artist_id, platform)
     await db
       .insert(platformConnections)
       .values({
@@ -80,10 +66,18 @@ export async function GET(req: Request, ctx: Ctx) {
         accessToken,
         refreshToken: refreshToken ?? null,
         tokenExpiresAt: expiresAt ?? null,
+        platformAccountId: info.accountId ?? null,
       })
       .onConflictDoUpdate({
         target: [platformConnections.artistId, platformConnections.platform],
-        set: { accountHandle, status: "connected", accessToken, refreshToken: refreshToken ?? null, tokenExpiresAt: expiresAt ?? null },
+        set: {
+          accountHandle,
+          status: "connected",
+          accessToken,
+          refreshToken: refreshToken ?? null,
+          tokenExpiresAt: expiresAt ?? null,
+          platformAccountId: info.accountId ?? null,
+        },
       });
 
     return Response.redirect(
