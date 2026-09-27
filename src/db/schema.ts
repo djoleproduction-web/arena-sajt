@@ -8,19 +8,12 @@ import {
   index,
 } from "drizzle-orm/pg-core";
 
-/**
- * Artists — roster of music artists managed in the workspace.
- */
 export const artists = pgTable("artists", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
 });
 
-/**
- * One connection row per (artist, platform) pair.
- * status: 'connected' | 'disconnected'
- */
 export const platformConnections = pgTable(
   "platform_connections",
   {
@@ -28,9 +21,12 @@ export const platformConnections = pgTable(
     artistId: integer("artist_id")
       .notNull()
       .references(() => artists.id, { onDelete: "cascade" }),
-    platform: text("platform").notNull(), // 'tiktok' | 'instagram' | 'youtube'
+    platform: text("platform").notNull(),
     accountHandle: text("account_handle").notNull(),
     status: text("status").notNull().default("disconnected"),
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    tokenExpiresAt: timestamp("token_expires_at", { mode: "date" }),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   },
   (t) => [
@@ -39,11 +35,6 @@ export const platformConnections = pgTable(
   ]
 );
 
-/**
- * Scheduled video posts.
- * status: 'draft' | 'scheduled' | 'published'
- * executionType: 'direct_publish' | 'send_to_draft'
- */
 export const scheduledPosts = pgTable(
   "scheduled_posts",
   {
