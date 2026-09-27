@@ -16,7 +16,6 @@ async function publishYouTube(
   caption: string
 ): Promise<PublishResult> {
   try {
-    // fetch the video bytes from Blob storage
     const videoRes = await fetch(videoUrl);
     if (!videoRes.ok) throw new Error("Could not fetch video from storage");
     const videoBlob = await videoRes.blob();
@@ -26,7 +25,6 @@ async function publishYouTube(
       status: { privacyStatus: "public" },
     };
 
-    // resumable upload: step 1, initiate
     const initRes = await fetch(
       "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
       {
@@ -46,7 +44,6 @@ async function publishYouTube(
     const uploadUrl = initRes.headers.get("location");
     if (!uploadUrl) throw new Error("No upload URL returned by YouTube");
 
-    // step 2: upload the actual bytes
     const uploadRes = await fetch(uploadUrl, {
       method: "PUT",
       headers: { "Content-Type": "video/mp4" },
@@ -63,83 +60,11 @@ async function publishYouTube(
   }
 }
 
-async function publishInstagram(
-  accessToken: string,
-  igBusinessId: string,
-  videoUrl: string,
-  caption: string
-): Promise<PublishResult> {
-  try {
-    const GRAPH = "https://graph.instagram.com";
-
-    const containerRes = await fetch(`${GRAPH}/${igBusinessId}/media`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        media_type: "REELS",
-        video_url: videoUrl,
-        caption: caption.slice(0, 2200),
-        access_token: accessToken,
-      }),
-    });
-    const containerData = await containerRes.json();
-    if (!containerRes.ok) throw new Error(JSON.stringify(containerData).slice(0, 300));
-    const creationId = containerData.id;
-
-    let status = "IN_PROGRESS";
-    for (let i = 0; i < 30 && status !== "FINISHED"; i++) {
-      await new Promise((r) => setTimeout(r, 4000));
-      const checkRes = await fetch(
-        `${GRAPH}/${creationId}?fields=status_code&access_token=${encodeURIComponent(accessToken)}`
-      );
-      const checkData = await checkRes.json();
-      status = checkData.status_code;
-      if (status === "ERROR") throw new Error("Instagram failed to process the video");
-    }
-    if (status !== "FINISHED") throw new Error("Instagram processing timed out");
-
-    const publishRes = await fetch(`${GRAPH}/${igBusinessId}/media_publish`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ creation_id: creationId, access_token: accessToken }),
-    });
-    const publishData = await publishRes.json();
-    if (!publishRes.ok) throw new Error(JSON.stringify(publishData).slice(0, 300));
-
-    return { success: true, externalId: publishData.id };
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Unknown Instagram error" };
-  }
-}
-
-async function publishTikTok(
-  accessToken: string,
-  videoUrl: string,
-  caption: string
-): Promise<PublishResult> {
-  try {
-    // Draft mode only (Direct Post not yet approved) — lands in the user's TikTok inbox
-    const res = await fetch("https://open.tiktokapis.com/v2/post/publish/inbox/video/init/", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        source_info: { source: "PULL_FROM_URL", video_url: videoUrl },
-        post_info: { title: caption.slice(0, 150) },
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok || data.error?.code !== "ok") {
-      throw new Error(JSON.stringify(data).slice(0, 300));
-    }
-    return { success: true, externalId: data.data?.publish_id };
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : "Unknown TikTok error" };
-  }
-}
-
-export async function publishPost(postId: number): Promise<void> {
+export async function publishPost(postId: number): Promise<{ results: Record<string, PublishResult> }> {
   const [post] = await db.select().from(scheduledPosts).where(eq(scheduledPosts.id, postId));
-  if (!post || !post.videoUrl) return;
+  if (!post || !post.videoUrl) {
+    return { results: { error: { success: false, error: "Post or video not found" } } };
+  }
 
   const results: Record<string, PublishResult> = {};
 
@@ -158,11 +83,8 @@ export async function publishPost(postId: number): Promise<void> {
 
     if (platform === "youtube") {
       results[platform] = await publishYouTube(conn.accessToken, post.videoUrl, post.title, post.caption);
-    } else if (platform === "instagram") {
-      const meta = conn.accountHandle; // igBusinessId not stored separately — see note below
-      results[platform] = await publishInstagram(conn.accessToken, meta, post.videoUrl, post.caption);
-    } else if (platform === "tiktok") {
-      results[platform] = await publishTikTok(conn.accessToken, post.videoUrl, post.caption);
+    } else {
+      results[platform] = { success: false, error: `${platform} publishing not implemented yet` };
     }
   }
 
@@ -171,4 +93,6 @@ export async function publishPost(postId: number): Promise<void> {
     .update(scheduledPosts)
     .set({ status: allOk ? "published" : "draft" })
     .where(eq(scheduledPosts.id, postId));
+
+  return { results };
 }
