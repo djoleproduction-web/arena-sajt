@@ -2,6 +2,7 @@ import { db } from "@/db";
 import { artists, scheduledPosts } from "@/db/schema";
 import { asc, eq } from "drizzle-orm";
 import { PLATFORMS } from "@/lib/utils";
+import { publishPost } from "@/lib/publish";
 
 export const dynamic = "force-dynamic";
 
@@ -76,7 +77,6 @@ export async function POST(req: Request) {
       return Response.json({ error: "scheduled status requires a time" }, { status: 400 });
     }
 
-    // FK safety: verify the artist exists before inserting the post.
     const [artist] = await db.select().from(artists).where(eq(artists.id, artistId));
     if (!artist) {
       return Response.json({ error: "Artist not found" }, { status: 404 });
@@ -96,6 +96,16 @@ export async function POST(req: Request) {
         videoUrl: typeof body.videoUrl === "string" ? body.videoUrl : null,
       })
       .returning();
+
+    if (
+      row.status === "scheduled" &&
+      row.executionType === "direct_publish" &&
+      row.videoUrl &&
+      row.scheduledTime &&
+      new Date(row.scheduledTime).getTime() <= Date.now() + 60_000
+    ) {
+      publishPost(row.id).catch((e) => console.error("Immediate publish failed", e));
+    }
 
     return Response.json({ post: row }, { status: 201 });
   } catch (e) {
